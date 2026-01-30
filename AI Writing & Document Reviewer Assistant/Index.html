@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hotwax Systems AI Writing Assistant</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      overflow: hidden;
+    }
+
+    .header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 30px;
+      text-align: center;
+    }
+
+    .header h1 {
+      font-size: 28px;
+      margin-bottom: 10px;
+    }
+
+    .header p {
+      opacity: 0.9;
+      font-size: 14px;
+    }
+
+    .helper-text {
+      padding: 15px 20px;
+      background: #e7f3ff;
+      border-left: 4px solid #667eea;
+      margin: 20px;
+      border-radius: 4px;
+      font-size: 13px;
+      color: #495057;
+    }
+
+    .helper-text strong {
+      color: #667eea;
+      display: block;
+      margin-bottom: 5px;
+    }
+
+    .settings-panel {
+      padding: 15px 20px;
+      background: #f8f9fa;
+      border-bottom: 1px solid #e9ecef;
+      display: flex;
+      align-items: center;
+      gap: 15px;
+    }
+
+    .toggle-container {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .toggle-switch {
+      position: relative;
+      width: 50px;
+      height: 26px;
+    }
+
+    .toggle-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .toggle-slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #ccc;
+      transition: 0.4s;
+      border-radius: 26px;
+    }
+
+    .toggle-slider:before {
+      position: absolute;
+      content: "";
+      height: 20px;
+      width: 20px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: 0.4s;
+      border-radius: 50%;
+    }
+
+    .toggle-switch input:checked + .toggle-slider {
+      background-color: #667eea;
+    }
+
+    .toggle-switch input:checked + .toggle-slider:before {
+      transform: translateX(24px);
+    }
+
+    .toggle-label {
+      font-size: 14px;
+      color: #495057;
+      font-weight: 500;
+    }
+
+    .toggle-description {
+      font-size: 12px;
+      color: #6c757d;
+      margin-left: auto;
+    }
+
+    .chat-container {
+      height: 450px;
+      overflow-y: auto;
+      padding: 20px;
+      background: #f8f9fa;
+    }
+
+    .message {
+      margin-bottom: 20px;
+      display: flex;
+      gap: 12px;
+      animation: fadeIn 0.3s ease;
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .message.user {
+      flex-direction: row-reverse;
+    }
+
+    .message-avatar {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      flex-shrink: 0;
+    }
+
+    .message.user .message-avatar {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+    }
+
+    .message.assistant .message-avatar {
+      background: #e9ecef;
+      color: #495057;
+    }
+
+    .message-content {
+      max-width: 70%;
+      padding: 12px 16px;
+      border-radius: 12px;
+      word-wrap: break-word;
+      line-height: 1.5;
+    }
+
+    .message.user .message-content {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+    }
+
+    .message.assistant .message-content {
+      background: white;
+      color: #212529;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    }
+
+    .message-content strong {
+      display: block;
+      margin-top: 10px;
+      color: #667eea;
+    }
+
+    .message.user .message-content strong {
+      color: white;
+    }
+
+    .comment-badge {
+      display: inline-block;
+      background: #28a745;
+      color: white;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      margin-top: 8px;
+      font-weight: 600;
+    }
+
+    .input-container {
+      padding: 20px;
+      background: white;
+      border-top: 1px solid #e9ecef;
+    }
+
+    .input-group {
+      display: flex;
+      gap: 10px;
+    }
+
+    .input-field {
+      flex: 1;
+      padding: 12px 16px;
+      border: 2px solid #e9ecef;
+      border-radius: 8px;
+      font-size: 14px;
+      transition: border-color 0.3s;
+    }
+
+    .input-field:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+
+    .btn {
+      padding: 12px 24px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+
+    .btn:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+    }
+
+    .btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .loading {
+      display: none;
+      text-align: center;
+      padding: 20px;
+      color: #6c757d;
+    }
+
+    .loading.active {
+      display: block;
+    }
+
+    .spinner {
+      border: 3px solid #f3f3f3;
+      border-top: 3px solid #667eea;
+      border-radius: 50%;
+      width: 30px;
+      height: 30px;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 10px;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🤖 AI Writing Assistant</h1>
+      <p>Your intelligent companion for content review and writing guidelines,<br> Stupid Humans Tech</p>
+    </div>
+
+    <div class="helper-text">
+      <strong>I can help you with:</strong>
+      📝 Review Google Docs and add comments directly in the document<br>
+      💡 Answer questions about writing guidelines<br>
+      📚 Search through your writing rules documents<br>
+      ✨ Provide examples and best practices
+    </div>
+
+    <div class="settings-panel">
+      <div class="toggle-container">
+        <label class="toggle-switch">
+          <input type="checkbox" id="addCommentsToggle" checked>
+          <span class="toggle-slider"></span>
+        </label>
+        <span class="toggle-label">Add comments to document</span>
+      </div>
+      <span class="toggle-description">✨ When enabled, suggestions will be added as comments/highlights in the Google Doc</span>
+    </div>
+
+    <div class="chat-container" id="chatContainer">
+      <div class="message assistant">
+        <div class="message-avatar">🤖</div>
+        <div class="message-content">
+          Hello! I'm your AI Writing Assistant. I can:<br><br>
+          📝 <strong>Document Review</strong> - Share a Google Docs link and I'll check it<br>
+          💬 <strong>Add Comments</strong> - Toggle on to add suggestions directly in your doc<br>
+          💡 <strong>Answer Questions</strong> - Ask about writing guidelines<br>
+          📚 <strong>Search Rules</strong> - Find specific style guidelines<br><br>
+          What would you like help with today?
+        </div>
+      </div>
+    </div>
+
+    <div class="loading" id="loading">
+      <div class="spinner"></div>
+      <p>Analyzing document and adding comments...</p>
+    </div>
+
+    <div class="input-container">
+      <div class="input-group">
+        <input 
+          type="text" 
+          class="input-field" 
+          id="userInput" 
+          placeholder="Ask about writing rules, or paste a Google Docs URL to review..."
+          onkeypress="if(event.key === 'Enter') sendMessage()"
+        >
+        <button class="btn" onclick="sendMessage()" id="sendBtn">Send</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let conversationHistory = [];
+
+    function addMessage(role, content, commentsAdded = null) {
+      const chatContainer = document.getElementById('chatContainer');
+      const messageDiv = document.createElement('div');
+      messageDiv.className = `message ${role}`;
+      
+      const avatar = document.createElement('div');
+      avatar.className = 'message-avatar';
+      avatar.textContent = role === 'user' ? '👤' : '🤖';
+      
+      const contentDiv = document.createElement('div');
+      contentDiv.className = 'message-content';
+      
+      // Format content
+      const formattedContent = content
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\n/g, '<br>');
+      
+      contentDiv.innerHTML = formattedContent;
+      
+      // Add comment badge if comments were added
+      if (commentsAdded && commentsAdded > 0) {
+        const badge = document.createElement('div');
+        badge.className = 'comment-badge';
+        badge.textContent = `✓ ${commentsAdded} comment${commentsAdded > 1 ? 's' : ''} added to document`;
+        contentDiv.appendChild(badge);
+      }
+      
+      messageDiv.appendChild(avatar);
+      messageDiv.appendChild(contentDiv);
+      chatContainer.appendChild(messageDiv);
+      
+      chatContainer.scrollTop = chatContainer.scrollHeight;
+    }
+
+    function setLoading(isLoading) {
+      document.getElementById('loading').classList.toggle('active', isLoading);
+      document.getElementById('sendBtn').disabled = isLoading;
+      document.getElementById('userInput').disabled = isLoading;
+    }
+
+    function sendMessage() {
+      const input = document.getElementById('userInput');
+      const message = input.value.trim();
+      const addComments = document.getElementById('addCommentsToggle').checked;
+      
+      if (!message) return;
+      
+      // Add user message to UI
+      addMessage('user', message);
+      
+      // Add to conversation history
+      conversationHistory.push({
+        role: 'user',
+        content: message
+      });
+      
+      // Clear input
+      input.value = '';
+      
+      // Show loading
+      setLoading(true);
+      
+      try {
+        if (typeof google !== 'undefined' && google.script && google.script.run) {
+          // Call backend with comment flag
+          google.script.run
+            .withSuccessHandler(function(result) {
+              handleResponse(result);
+            })
+            .withFailureHandler(function(error) {
+              addMessage('assistant', `❌ Error: ${error.message}`);
+              setLoading(false);
+            })
+            .processMessageWithComments(message, conversationHistory, addComments);
+        } else {
+          addMessage('assistant', '⚠️ Please access this through the deployed web app URL.');
+          setLoading(false);
+        }
+        
+      } catch (error) {
+        addMessage('assistant', `❌ Error: ${error.message}`);
+        setLoading(false);
+      }
+    }
+
+    function handleResponse(result) {
+      if (result.error) {
+        addMessage('assistant', `❌ Error: ${result.error}`);
+      } else if (result.success) {
+        addMessage('assistant', result.message, result.commentsAdded);
+        conversationHistory.push({
+          role: 'assistant',
+          content: result.message
+        });
+      } else {
+        addMessage('assistant', result.message || 'Unable to process the request.');
+      }
+      setLoading(false);
+    }
+
+    window.onload = function() {
+      document.getElementById('userInput').focus();
+    };
+  </script>
+</body>
+</html>
