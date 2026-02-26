@@ -1,0 +1,341 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtHour": 8,
+              "triggerAtWeekday": 2
+            }
+          ]
+        }
+      },
+      "id": "node-schedule-trigger",
+      "name": "Every Tuesday 8AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-864, 144],
+      "notes": "Runs every Tuesday at 8AM. Change triggerAtWeekday: 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "documentURL": "={{ $vars.APPROVAL_DOC_ID }}"
+      },
+      "id": "node-read-google-doc",
+      "name": "Read Approval Google Doc",
+      "type": "n8n-nodes-base.googleDocs",
+      "typeVersion": 2,
+      "position": [-624, 32],
+      "credentials": {
+        "googleDocsOAuth2Api": {
+          "id": "YOUR_GOOGLE_DOCS_CREDENTIAL_ID",
+          "name": "Google Docs account"
+        }
+      },
+      "notes": "Reads the full text of your Approval Google Doc. Set APPROVAL_DOC_ID in n8n Variables."
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $vars.SCHEDULE_SHEET_ID }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $vars.SCHEDULE_SHEET_TAB }}",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "node-read-sheet-history",
+      "name": "Read Scheduled Posts History",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [-624, 208],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_GOOGLE_SHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets account"
+        }
+      },
+      "notes": "Reads all existing rows from your schedule sheet to give Gemini the history context."
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// NODE: Parse Approved Posts from Doc\n// ============================================================\n// YOUR DOC STRUCTURE (inside the '## Approved Posts' section):\n//   Post Topic Here          ← first line = title\n//\n//   Post content goes here...\n//   Multiple lines are fine.\n//   ─────────────────────────  ← horizontal rule separator\n//   Another Post Topic\n//\n//   More content here...\n// ============================================================\n\nconst docItem = $('Read Approval Google Doc').first().json;\n\nlet docText = '';\nif (typeof docItem.content === 'string') {\n  docText = docItem.content;\n} else if (docItem.body && docItem.body.content) {\n  docText = docItem.body.content\n    .filter(b => b.paragraph)\n    .map(b => (b.paragraph.elements || []).map(el => el.textRun ? el.textRun.content : '').join(''))\n    .join('');\n} else {\n  throw new Error('Cannot read doc. Keys found: ' + Object.keys(docItem).join(', '));\n}\n\nif (!docText.trim()) throw new Error('Google Doc appears to be empty.');\n\nconst normalizedText = docText\n  .replace(/\\\\n/g, '\\n')\n  .replace(/\\r\\n/g, '\\n')\n  .replace(/\\r/g, '\\n');\n\nconst dividerPattern = /^[\\s\\u2013\\u2014\\u2015\\u2500\\-_=*]{3,}\\s*$/m;\nlet postBlocks = normalizedText.split(dividerPattern).map(b => b.trim()).filter(b => b.length > 0);\n\nif (postBlocks.length <= 1) {\n  postBlocks = normalizedText.split(/\\n{3,}/).map(b => b.trim()).filter(b => b.length > 0);\n}\n\nconst pendingPosts = postBlocks.map(block => {\n  const lines = block.split('\\n').map(l => l.trim()).filter(l => l.length > 0);\n  if (lines.length === 0) return null;\n  const topic = lines[0].trim();\n  const content = lines.slice(1).join('\\n').trim();\n  return { topic, content };\n}).filter(p => p !== null && p.topic && p.content && p.content.length > 10);\n\nif (pendingPosts.length === 0) {\n  const preview = normalizedText.slice(0, 500);\n  throw new Error(`Could not parse any posts.\\nDoc preview:\\n${preview}\\n\\nMake sure posts are separated by horizontal rules (Insert → Horizontal line).`);\n}\n\nconsole.log(`✅ Parsed ${pendingPosts.length} pending post(s)`);\nreturn [{ json: { pendingPosts, count: pendingPosts.length } }];"
+      },
+      "id": "node-parse-posts",
+      "name": "Parse Approved Posts from Doc",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-400, 32]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { pendingPosts, count } = $('Parse Approved Posts from Doc').first().json;\n\nif (!pendingPosts || count === 0) {\n  return [{ json: { shouldContinue: false, reason: 'No pending posts to schedule.' } }];\n}\n\nreturn [{ json: { shouldContinue: true, count } }];"
+      },
+      "id": "node-check-posts",
+      "name": "Any Posts to Schedule?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-176, 32]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-continue",
+              "leftValue": "={{ $json.shouldContinue }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "node-if-has-posts",
+      "name": "Has Posts?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [16, 32]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// NODE: Build Gemini Prompt\n// ============================================================\n// Customize the company name and platform below.\n// ============================================================\n\nconst COMPANY_NAME = 'Your Company Name';       // ← change this\nconst PLATFORM = 'LinkedIn';                    // ← change this\n\nconst pendingPosts = $('Parse Approved Posts from Doc').first().json.pendingPosts;\n\nlet historyRows = [];\ntry {\n  const items = $('Read Scheduled Posts History').all();\n  if (items && items.length > 0) {\n    historyRows = items.map(item => item.json).filter(Boolean);\n  }\n} catch(e) {\n  historyRows = [];\n}\n\nconst eightWeeksAgo = new Date();\neightWeeksAgo.setDate(eightWeeksAgo.getDate() - 56);\n\nconst recentHistory = historyRows\n  .filter(row => {\n    if (!row.Date) return false;\n    const d = new Date(row.Date);\n    return !isNaN(d.getTime()) && d >= eightWeeksAgo;\n  })\n  .map(row => ({\n    date:     row.Date              || '',\n    campaign: row['Post Campaign']  || '',\n    topic:    row['Post Topic']     || '',\n    status:   row.Status            || ''\n  }));\n\nconst allScheduledTopics = historyRows\n  .map(row => (row['Post Topic'] || '').toLowerCase().trim())\n  .filter(Boolean);\n\nconst prompt = `You are a ${PLATFORM} content strategist for ${COMPANY_NAME}.\n\nYour task:\n1. Analyze recently scheduled posts for content themes and flow\n2. Review all pending posts\n3. Decide the BEST ORDER to schedule pending posts across future weeks\n4. Assign a short campaign label to each post\n5. Ensure no topic repetition and maintain logical content variety\n\n---\n## RECENTLY SCHEDULED POSTS (last 8 weeks)\n${recentHistory.length > 0 ? JSON.stringify(recentHistory, null, 2) : 'No history yet.'}\n\n## ALL TOPICS EVER SCHEDULED (never repeat)\n${allScheduledTopics.length > 0 ? allScheduledTopics.map(t => '- ' + t).join('\\n') : 'None yet.'}\n\n---\n## PENDING POSTS TO SCHEDULE (${pendingPosts.length} total)\n${JSON.stringify(pendingPosts.map((p, i) => ({ index: i, topic: p.topic, contentPreview: p.content.slice(0, 300) })), null, 2)}\n\n---\n## YOUR TASK\nReturn ONLY a valid JSON array (no markdown, no explanation) with ALL ${pendingPosts.length} posts.\n\nEach item must have exactly:\n{\n  \"originalIndex\": <number>,\n  \"topic\": \"<post topic>\",\n  \"campaign\": \"<2-5 word campaign label>\",\n  \"schedulingReason\": \"<one sentence why this order makes sense>\"\n}\n\nRules:\n- Include ALL pending posts\n- Order for best content variety\n- Avoid similar themes in consecutive weeks\n- Output must be valid JSON only\n`;\n\nreturn [{ json: { prompt, pendingPosts, allScheduledTopics } }];"
+      },
+      "id": "node-build-prompt",
+      "name": "Build Gemini Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [224, -32]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={{ $vars.GEMINI_API_KEY }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [\n    {\n      \"parts\": [\n        {\n          \"text\": {{ JSON.stringify($json.prompt) }}\n        }\n      ]\n    }\n  ],\n  \"generationConfig\": {\n    \"temperature\": 0.3,\n    \"topK\": 40,\n    \"topP\": 0.95,\n    \"maxOutputTokens\": 8192\n  }\n}",
+        "options": {}
+      },
+      "id": "node-gemini-api",
+      "name": "Gemini — Analyze & Order Posts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [448, -32],
+      "notes": "Get your Gemini API key at: https://aistudio.google.com/app/apikey — set it as GEMINI_API_KEY in n8n Variables."
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// NODE: Parse Gemini Response + Assign Posting Dates\n// ============================================================\n\nconst geminiResponse = $('Gemini — Analyze & Order Posts').first().json;\nconst pendingPosts   = $('Build Gemini Prompt').first().json.pendingPosts;\n\nlet rawText = '';\ntry {\n  rawText = geminiResponse.candidates[0].content.parts[0].text;\n} catch (e) {\n  throw new Error('Gemini response structure unexpected: ' + JSON.stringify(geminiResponse));\n}\n\nconst cleaned = rawText\n  .replace(/^```json\\s*/i, '')\n  .replace(/^```\\s*/i, '')\n  .replace(/\\s*```$/i, '')\n  .trim();\n\nlet orderedPosts;\ntry {\n  orderedPosts = JSON.parse(cleaned);\n} catch (e) {\n  throw new Error('Failed to parse Gemini JSON. Raw: ' + rawText.slice(0, 500));\n}\n\nif (!Array.isArray(orderedPosts) || orderedPosts.length === 0) {\n  throw new Error('Gemini returned empty or non-array output.');\n}\n\nfunction getNextTuesday(fromDate, weeksAhead) {\n  const d = new Date(fromDate);\n  const dayOfWeek = d.getDay();\n  const daysUntilTuesday = (2 - dayOfWeek + 7) % 7 || 7;\n  d.setDate(d.getDate() + daysUntilTuesday + (weeksAhead * 7));\n  return d;\n}\n\nconst today = new Date();\nconst dayNames = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];\n\nconst sheetRows = orderedPosts.map((item, weekIndex) => {\n  const pendingPost = pendingPosts[item.originalIndex];\n  if (!pendingPost) throw new Error(`Invalid originalIndex: ${item.originalIndex}`);\n\n  const postDate = getNextTuesday(today, weekIndex);\n  const dateStr  = postDate.toISOString().split('T')[0];\n  const dayName  = dayNames[postDate.getDay()];\n\n  return {\n    json: {\n      Date:            dateStr,\n      Day:             dayName,\n      'Post Campaign': item.campaign,\n      'Post Topic':    pendingPost.topic,\n      'Post Content':  pendingPost.content,\n      Comment:         item.schedulingReason || '',\n      Media:           '',\n      Status:          'Scheduled',\n      _originalTopic:  pendingPost.topic,\n      _weekIndex:      weekIndex,\n    }\n  };\n});\n\nconsole.log(`Assigned ${sheetRows.length} posts starting from next Tuesday.`);\nreturn sheetRows;"
+      },
+      "id": "node-parse-gemini",
+      "name": "Parse Gemini + Assign Dates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [656, -32]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $vars.SCHEDULE_SHEET_ID }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $vars.SCHEDULE_SHEET_TAB }}",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Date":           "={{ $json.Date }}",
+            "Day":            "={{ $json.Day }}",
+            "Post Campaign":  "={{ $json['Post Campaign'] }}",
+            "Post Topic":     "={{ $json['Post Topic'] }}",
+            "Post Content":   "={{ $json['Post Content'] }}",
+            "Comment":        "={{ $json.Comment }}",
+            "Media":          "={{ $json.Media }}",
+            "Status":         "={{ $json.Status }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "Date",          "displayName": "Date",          "type": "string" },
+            { "id": "Day",           "displayName": "Day",           "type": "string" },
+            { "id": "Post Campaign", "displayName": "Post Campaign", "type": "string" },
+            { "id": "Post Topic",    "displayName": "Post Topic",    "type": "string" },
+            { "id": "Post Content",  "displayName": "Post Content",  "type": "string" },
+            { "id": "Comment",       "displayName": "Comment",       "type": "string" },
+            { "id": "Media",         "displayName": "Media",         "type": "string" },
+            { "id": "Status",        "displayName": "Status",        "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-write-sheet",
+      "name": "Write Posts to Google Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [832, -304],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_GOOGLE_SHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets account"
+        }
+      },
+      "notes": "Appends each scheduled post as a new row. n8n loops automatically over all items."
+    },
+    {
+      "parameters": {
+        "jsCode": "const allItems = $('Write Posts to Google Sheet').all();\nconst topics = allItems.map(item => item.json._originalTopic).filter(Boolean);\nreturn [{ json: { topicsToArchive: topics, count: topics.length } }];"
+      },
+      "id": "node-collect-written",
+      "name": "Collect Written Posts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1056, -32]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// NODE: Prepare Doc Archive Update\n// ============================================================\n\nconst topicsToArchive = $('Collect Written Posts').first().json.topicsToArchive || [];\n\nconst docItem = $('Read Approval Google Doc').first().json;\nlet docText = '';\nif (typeof docItem.content === 'string') {\n  docText = docItem.content;\n} else if (docItem.body && docItem.body.content) {\n  docText = docItem.body.content\n    .filter(b => b.paragraph)\n    .map(b => (b.paragraph.elements || []).map(el => el.textRun ? el.textRun.content : '').join(''))\n    .join('');\n} else {\n  throw new Error('Cannot read doc. Keys: ' + Object.keys(docItem).join(', '));\n}\n\ndocText = docText.replace(/\\\\n/g, '\\n').replace(/\\r\\n/g, '\\n').replace(/\\r/g, '\\n');\n\nif (!topicsToArchive || topicsToArchive.length === 0) {\n  return [{ json: { newDocText: docText, archivedCount: 0, keptCount: 0, skipped: true } }];\n}\n\nfunction splitIntoSections(text) {\n  const result = {};\n  const lines = text.split('\\n');\n  let currentSection = '_preamble';\n  result[currentSection] = [];\n  lines.forEach(line => {\n    if (line.match(/^##\\s+[^#]/)) {\n      currentSection = line.replace(/^##\\s+/, '').trim();\n      result[currentSection] = [];\n    } else {\n      result[currentSection].push(line);\n    }\n  });\n  return result;\n}\n\nconst sections = splitIntoSections(docText);\nconst approvedKey = Object.keys(sections).find(k => k.toLowerCase().includes('approved'));\nconst movedKey    = Object.keys(sections).find(k => k.toLowerCase().includes('moved')) || 'Moved to Sheet';\n\nif (!approvedKey) {\n  return [{ json: { newDocText: docText, archivedCount: 0, keptCount: 0 } }];\n}\n\nconst approvedText = sections[approvedKey].join('\\n');\nconst dividerPattern = /\\n[\\s\\u2013\\u2014\\u2015\\u2500\\-_=*]{3,}\\s*\\n/g;\nlet allApprovedPosts = approvedText.split(dividerPattern).map(b => b.trim()).filter(b => b.length > 10);\n\nif (allApprovedPosts.length <= 1) {\n  allApprovedPosts = approvedText.split(/\\n{3,}/).map(b => b.trim()).filter(b => b.length > 10);\n}\n\nconst postsToMove = [];\nconst postsToKeep = [];\n\nallApprovedPosts.forEach(postBlock => {\n  const firstLine = postBlock.split('\\n')[0].replace(/^#+\\s+/, '').trim().toLowerCase();\n  const shouldMove = topicsToArchive.some(t =>\n    firstLine.includes(t.toLowerCase()) || t.toLowerCase().includes(firstLine)\n  );\n  if (shouldMove) postsToMove.push(postBlock.trim());\n  else postsToKeep.push(postBlock.trim());\n});\n\nconst movedTimestamp  = new Date().toISOString().split('T')[0];\nconst existingMoved   = sections[movedKey] ? sections[movedKey].join('\\n').trim() : '';\nconst newMovedContent = [existingMoved, postsToMove.length > 0 ? `\\n\\n— Moved on ${movedTimestamp} —` : '', ...postsToMove].join('\\n').trim();\nconst preamble        = sections['_preamble'] ? sections['_preamble'].join('\\n').trim() : '';\n\nlet newDocText = '';\nif (preamble) newDocText += preamble + '\\n\\n';\nnewDocText += `## ${approvedKey}\\n\\n`;\nnewDocText += postsToKeep.length > 0 ? postsToKeep.join('\\n\\n---\\n\\n') : '(No pending posts)';\nnewDocText += `\\n\\n## ${movedKey}\\n\\n` + newMovedContent;\n\nObject.keys(sections).forEach(key => {\n  if (['_preamble', approvedKey, movedKey].includes(key)) return;\n  newDocText += `\\n\\n## ${key}\\n\\n${sections[key].join('\\n').trim()}`;\n});\n\nreturn [{ json: { newDocText, archivedCount: postsToMove.length, keptCount: postsToKeep.length } }];"
+      },
+      "id": "node-prepare-archive",
+      "name": "Prepare Doc Archive Update",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1248, -32]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://docs.googleapis.com/v1/documents/{{ $vars.APPROVAL_DOC_ID }}:batchUpdate",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDocsOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"requests\": [\n    {\n      \"deleteContentRange\": {\n        \"range\": {\n          \"startIndex\": 1,\n          \"endIndex\": {{ $('Read Approval Google Doc').first().json.body.content.slice(-1)[0].endIndex - 1 }}\n        }\n      }\n    },\n    {\n      \"insertText\": {\n        \"location\": { \"index\": 1 },\n        \"text\": {{ JSON.stringify($('Prepare Doc Archive Update').first().json.newDocText) }}\n      }\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "node-rewrite-doc",
+      "name": "Rewrite Google Doc via API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1456, 112],
+      "credentials": {
+        "googleDocsOAuth2Api": {
+          "id": "YOUR_GOOGLE_DOCS_CREDENTIAL_ID",
+          "name": "Google Docs account"
+        }
+      },
+      "notes": "Uses Google Docs batchUpdate API to clear and rewrite the doc. Archives scheduled posts automatically."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $vars.GOOGLE_CHAT_WEBHOOK_URL }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"text\": \"✅ *LinkedIn Post Scheduling Complete!*\\n\\n📊 *{{ $('Parse Gemini + Assign Dates').all().length }} posts* scheduled starting from next Tuesday.\\n\\n{{ $('Parse Gemini + Assign Dates').all().map(item => `• *${item.json.Date}* — ${item.json['Post Topic']} _(${item.json['Post Campaign']})_`).join('\\\\n') }}\\n\\n🤖 _Ordered by Gemini based on content flow analysis._\"\n}",
+        "options": {}
+      },
+      "id": "node-notify-chat",
+      "name": "Notify Google Chat",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1648, 32],
+      "notes": "Sends a summary to Google Chat. Set GOOGLE_CHAT_WEBHOOK_URL in n8n Variables."
+    },
+    {
+      "parameters": {
+        "content": "## 📋 REQUIRED VARIABLES\nSet these in n8n → Settings → Variables:\n\n• **APPROVAL_DOC_ID** — Google Doc ID (from the URL)\n• **SCHEDULE_SHEET_ID** — Google Sheet ID (from the URL)\n• **SCHEDULE_SHEET_TAB** — Sheet tab name (e.g. 'Schedule')\n• **GEMINI_API_KEY** — From https://aistudio.google.com/app/apikey\n• **GOOGLE_CHAT_WEBHOOK_URL** — From your Google Chat space → Manage webhooks",
+        "height": 200,
+        "width": 480,
+        "color": 3
+      },
+      "id": "sticky-config",
+      "name": "📋 Config Variables",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-1712, 336]
+    },
+    {
+      "parameters": {
+        "content": "## 📄 GOOGLE DOC FORMAT\nYour Approval doc must follow this structure:\n\n```\n## Approved Posts\n\nPost Topic Here\nFull post content...\nMultiple lines ok.\n\n---\nAnother Post Topic\nContent here...\n\n## Moved to Sheet\n(auto-managed — do not edit)\n```",
+        "height": 260,
+        "width": 380,
+        "color": 5
+      },
+      "id": "sticky-doc-format",
+      "name": "📄 Doc Format",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-1696, -80]
+    }
+  ],
+  "connections": {
+    "Every Tuesday 8AM": {
+      "main": [[
+        { "node": "Read Approval Google Doc",      "type": "main", "index": 0 },
+        { "node": "Read Scheduled Posts History",   "type": "main", "index": 0 }
+      ]]
+    },
+    "Read Approval Google Doc":    { "main": [[{ "node": "Parse Approved Posts from Doc", "type": "main", "index": 0 }]] },
+    "Read Scheduled Posts History":{ "main": [[{ "node": "Build Gemini Prompt",           "type": "main", "index": 0 }]] },
+    "Parse Approved Posts from Doc":{ "main": [[{ "node": "Any Posts to Schedule?",       "type": "main", "index": 0 }]] },
+    "Any Posts to Schedule?":      { "main": [[{ "node": "Has Posts?",                    "type": "main", "index": 0 }]] },
+    "Has Posts?":                  { "main": [[{ "node": "Build Gemini Prompt",           "type": "main", "index": 0 }]] },
+    "Build Gemini Prompt":         { "main": [[{ "node": "Gemini — Analyze & Order Posts","type": "main", "index": 0 }]] },
+    "Gemini — Analyze & Order Posts":{ "main": [[{ "node": "Parse Gemini + Assign Dates","type": "main", "index": 0 }]] },
+    "Parse Gemini + Assign Dates": { "main": [[{ "node": "Write Posts to Google Sheet",  "type": "main", "index": 0 }]] },
+    "Write Posts to Google Sheet": { "main": [[{ "node": "Collect Written Posts",         "type": "main", "index": 0 }]] },
+    "Collect Written Posts":       { "main": [[{ "node": "Prepare Doc Archive Update",    "type": "main", "index": 0 }]] },
+    "Prepare Doc Archive Update":  { "main": [[{ "node": "Rewrite Google Doc via API",    "type": "main", "index": 0 }]] },
+    "Rewrite Google Doc via API":  { "main": [[{ "node": "Notify Google Chat",            "type": "main", "index": 0 }]] }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}
